@@ -26,7 +26,7 @@ public class ChessAnalysisService {
 
     private final RestTemplate restTemplate = new RestTemplate();
 
-    public String generateReport(String username) {
+    public String generateReport(String username, String mood) {
         HttpHeaders headers = new HttpHeaders();
         headers.set("User-Agent", "chessAI.com - local-development");
         HttpEntity<?> entity = new HttpEntity<>(headers);
@@ -34,9 +34,7 @@ public class ChessAnalysisService {
         try {
             // Fetch archives
             String archiveUrl = "https://api.chess.com/pub/player/" + username + "/games/archives";
-            var archiveResponse = restTemplate.exchange(
-                    archiveUrl, HttpMethod.GET, entity, String.class
-            );
+            var archiveResponse = restTemplate.exchange(archiveUrl, HttpMethod.GET, entity, String.class);
             if (archiveResponse.getBody() == null) return "Empty response from chess.com";
             JsonNode archiveBody = objectMapper.readTree(archiveResponse.getBody());
 
@@ -47,9 +45,7 @@ public class ChessAnalysisService {
 
             // Fetch latest month's games
             String latestMonthUrl = archives.getLast();
-            var gamesResponse = restTemplate.exchange(
-                    latestMonthUrl, HttpMethod.GET, entity, String.class
-            );
+            var gamesResponse = restTemplate.exchange(latestMonthUrl, HttpMethod.GET, entity, String.class);
             if (gamesResponse.getBody() == null) return "Empty games response from chess.com";
             JsonNode gamesBody = objectMapper.readTree(gamesResponse.getBody());
 
@@ -67,7 +63,8 @@ public class ChessAnalysisService {
                 }
             }
 
-            return askGemini(username, pgnBuilder.toString());
+            // Pass mood down to askGemini
+            return askGemini(username, pgnBuilder.toString(), mood);
 
         } catch (Exception e) {
             logger.error("Failed to fetch chess data for user: {}", username, e);
@@ -75,9 +72,9 @@ public class ChessAnalysisService {
         }
     }
 
-    private String askGemini(String username, String pgns) {
-        // Enforcing a strict template in the prompt
-        String requestBody = getString(username, pgns);
+    // 2. Add 'mood' to askGemini
+    private String askGemini(String username, String pgns, String mood) {
+        String requestBody = getString(username, pgns, mood);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -88,32 +85,35 @@ public class ChessAnalysisService {
 
         try {
             JsonNode rootNode = objectMapper.readTree(response.getBody());
-
-            return rootNode.path("candidates")
-                    .get(0)
-                    .path("content")
-                    .path("parts")
-                    .get(0)
-                    .path("text")
-                    .asString();
-
+            return rootNode.path("candidates").get(0).path("content").path("parts").get(0).path("text").asString();
         } catch (Exception e) {
             logger.error("Failed to parse Gemini response for user: {}", username, e);
             return "Analysis complete, but failed to format the response text.";
         }
     }
 
-    private static String getString(String username, String pgns) {
-        String prompt = "Act as an expert chess coach. Analyze the following recent games for the player '" + username + "'. " +
-                "You MUST format your response EXACTLY according to the following structure. Do not deviate from these headings:\n\n" +
+    // 3. Inject the persona instructions based on the mood
+    private static String getString(String username, String pgns, String mood) {
+        String personaInstruction = switch (mood.toLowerCase()) {
+            case "roast" ->
+                    "Adopt a highly critical, sarcastic, and funny tone. Roast the player ruthlessly for their blunders and missed tactics like an arrogant grandmaster. ";
+            case "humor" ->
+                    "Keep the tone lighthearted, encouraging, and highly comedic. Use funny analogies to explain the chess moves. ";
+            case "sad" ->
+                    "Act overly dramatic and mournful about the player's mistakes. Speak as if every blunder is a profound, heart-breaking tragedy. ";
+            default -> "Provide a completely professional, objective, and serious analytical chess breakdown. ";
+        };
+
+        String prompt = "Act as an expert chess coach. " + personaInstruction + "Analyze the following recent games for the player '" + username + "'. " +
+                "You MUST format your response EXACTLY according to the following structure. Keep your tone consistent within these sections:\n\n" +
                 "### Introduction\n" +
-                "[Provide a brief overview of their playstyle and general performance based on the games]\n\n" +
+                "[Provide an overview of their playstyle based on the games]\n\n" +
                 "### Main Weaknesses\n" +
-                "[Provide a bulleted list detailing recurring positional inaccuracies, structural weaknesses, or blunders]\n\n" +
+                "[Provide a bulleted list detailing recurring blunders or inaccuracies]\n\n" +
                 "### Advice\n" +
-                "[Provide specific, actionable steps and training recommendations to improve]\n\n" +
+                "[Provide specific, actionable steps to improve]\n\n" +
                 "### Estimated Time to Improve\n" +
-                "[Provide a realistic timeframe to see rating results if this advice is followed consistently]\n\n" +
+                "[Provide a realistic timeframe to see results]\n\n" +
                 "Here are the games:\n" + pgns;
 
         return "{ \"contents\": [{ \"parts\":[{\"text\": \"" + prompt.replace("\"", "\\\"").replace("\n", "\\n") + "\"}] }] }";

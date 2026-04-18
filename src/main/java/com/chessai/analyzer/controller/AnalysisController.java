@@ -12,8 +12,9 @@ public class AnalysisController {
     @Autowired
     private ChessAnalysisService chessAnalysisService;
 
-    @GetMapping("/analyze/{username}")
-    public String analyze(@PathVariable String username) {
-        return chessAnalysisService.generateReport(username);
+    // Added the {mood} parameter to the path
+    @GetMapping("/analyze/{username}/{mood}")
+    public String analyze(@PathVariable String username, @PathVariable String mood) {
+        return chessAnalysisService.generateReport(username, mood);
     }
 }
