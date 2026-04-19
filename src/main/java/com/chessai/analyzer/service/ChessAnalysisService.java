@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -113,21 +114,46 @@ public class ChessAnalysisService {
     // --- GEMINI INTEGRATION ---
     private String askGemini(String username, String pgns, String mood) {
         String requestBody = getString(username, pgns, mood);
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         var request = new HttpEntity<>(requestBody, headers);
 
-        String fullUrl = geminiApiUrl + "?key=" + geminiApiKey;
-        var response = restTemplate.postForEntity(fullUrl, request, String.class);
+        // 1. Setup the Primary and Fallback URLs
+        String primaryUrl = geminiApiUrl + "?key=" + geminiApiKey;
+        // Dynamically create the backup URL by swapping the model name
+        String fallbackUrl = primaryUrl.replace("gemini-3.1-flash-lite-preview", "gemini-3-flash-preview");
 
         try {
-            JsonNode rootNode = objectMapper.readTree(response.getBody());
-            return rootNode.path("candidates").get(0).path("content").path("parts").get(0).path("text").asString();
+            // 2. ATTEMPT 1: Try the bleeding-edge preview model
+            var response = restTemplate.postForEntity(primaryUrl, request, String.class);
+            return parseGeminiResponse(response.getBody());
+
+        } catch (HttpStatusCodeException e) {
+            logger.warn("⚠️ Primary model overloaded ({}). Silently routing to fallback model...", e.getStatusCode());
+
+            try {
+                // 3. ATTEMPT 2: The primary failed, instantly try the rock-solid fallback model
+                var fallbackResponse = restTemplate.postForEntity(fallbackUrl, request, String.class);
+                return parseGeminiResponse(fallbackResponse.getBody());
+
+            } catch (HttpStatusCodeException fallbackErr) {
+                // 4. TOTAL FAILURE: Both models are down. Now we tell the user.
+                logger.error("❌ Fallback model also failed: {}", fallbackErr.getStatusCode());
+                return "Error: Both primary and backup AI models are currently experiencing massive traffic spikes. Please try again in 60 seconds!";
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+
         } catch (Exception e) {
             logger.error("Failed to parse Gemini response", e);
             return "Error: Analysis complete, but failed to format the response text.";
         }
+    }
+
+    // Helper method so we don't write the JSON parsing logic twice!
+    private String parseGeminiResponse(String responseBody) throws Exception {
+        JsonNode rootNode = objectMapper.readTree(responseBody);
+        return rootNode.path("candidates").get(0).path("content").path("parts").get(0).path("text").asString();
     }
 
     private static String getString(String username, String pgns, String mood) {
