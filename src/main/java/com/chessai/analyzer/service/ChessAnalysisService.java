@@ -27,49 +27,59 @@ public class ChessAnalysisService {
 
     private final RestTemplate restTemplate = new RestTemplate();
 
-    public String generateReport(String platform, String username, String mood) {
-        String pgns;
-
+    // ⚡ NEW: Public method to expose games to the frontend graphs
+    public List<String> fetchGamesList(String platform, String username, int limit) {
         if ("lichess".equalsIgnoreCase(platform)) {
-            pgns = fetchLichessData(username);
+            return fetchLichessGamesList(username, limit);
         } else {
-            pgns = fetchChessComData(username);
+            return fetchChessComGamesList(username, limit);
+        }
+    }
+
+    public String generateReport(String platform, String username, String mood) {
+        // ⚡ Reuse the list fetcher for the AI Report!
+        List<String> games = fetchGamesList(platform, username, 20);
+
+        if (games.isEmpty()) {
+            return "Error: Could not find user or no games found for '" + username + "'";
         }
 
-        // Return immediately if the fetchers returned an error message
-        if (pgns.startsWith("Error") || pgns.isEmpty()) {
-            return pgns;
-        }
-
+        // Join the list into a single string for Gemini
+        String pgns = String.join("\n\n", games);
         return askGemini(username, pgns, mood);
     }
 
-    // --- LICHESS MATCHER (Returns Raw PGNs) ---
-    private String fetchLichessData(String username) {
+    // --- LICHESS MATCHER (Returns List of PGNs) ---
+    private List<String> fetchLichessGamesList(String username, int limit) {
         try {
-            // max=20 strictly limits the payload
-            String url = "https://lichess.org/api/games/user/" + username + "?max=20";
+            String url = "https://lichess.org/api/games/user/" + username + "?max=" + limit;
 
             HttpHeaders headers = new HttpHeaders();
             headers.set("User-Agent", "chessAI.com - local-development");
-            headers.set("Accept", "application/x-chess-pgn"); // Forces Lichess to send raw PGN text
+            headers.set("Accept", "application/x-chess-pgn");
 
             HttpEntity<?> entity = new HttpEntity<>(headers);
             var response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+            String body = response.getBody();
 
-            if (response.getBody() == null || response.getBody().isBlank()) {
-                return "Error: No games found for Lichess user '" + username + "'";
+            if (body == null || body.isBlank()) return new ArrayList<>();
+
+            // Split the raw text block into individual PGNs
+            String[] parts = body.split("(?=\\[Event \")");
+            List<String> pgns = new ArrayList<>();
+            for (String part : parts) {
+                if (!part.trim().isEmpty()) pgns.add(part.trim());
             }
-            return response.getBody();
+            return pgns;
 
         } catch (Exception e) {
             logger.error("Failed to fetch Lichess data for user: {}", username, e);
-            return "Error: Could not find Lichess user '" + username + "'";
+            return new ArrayList<>();
         }
     }
 
-    // --- CHESS.COM MATCHER (Parses JSON Archives) ---
-    private String fetchChessComData(String username) {
+    // --- CHESS.COM MATCHER (Returns List of PGNs) ---
+    private List<String> fetchChessComGamesList(String username, int limit) {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.set("User-Agent", "chessAI.com - local-development");
@@ -77,37 +87,38 @@ public class ChessAnalysisService {
 
             String archiveUrl = "https://api.chess.com/pub/player/" + username + "/games/archives";
             var archiveResponse = restTemplate.exchange(archiveUrl, HttpMethod.GET, entity, String.class);
-            if (archiveResponse.getBody() == null) return "Error: Empty response from chess.com";
+            if (archiveResponse.getBody() == null) return new ArrayList<>();
 
             JsonNode archiveBody = objectMapper.readTree(archiveResponse.getBody());
             List<String> archives = new ArrayList<>();
             archiveBody.get("archives").forEach(node -> archives.add(node.asString()));
 
-            if (archives.isEmpty()) return "Error: No games found for this user.";
+            if (archives.isEmpty()) return new ArrayList<>();
 
             String latestMonthUrl = archives.getLast();
             var gamesResponse = restTemplate.exchange(latestMonthUrl, HttpMethod.GET, entity, String.class);
-            if (gamesResponse.getBody() == null) return "Error: Empty games response from chess.com";
+            if (gamesResponse.getBody() == null) return new ArrayList<>();
 
             JsonNode gamesBody = objectMapper.readTree(gamesResponse.getBody());
             JsonNode games = gamesBody.get("games");
-            if (games == null || games.isEmpty()) return "Error: No games found for this month.";
+            if (games == null || games.isEmpty()) return new ArrayList<>();
 
-            StringBuilder pgnBuilder = new StringBuilder();
+            List<String> pgns = new ArrayList<>();
             int total = games.size();
-            int limit = Math.min(total, 20); // Strictly limits to top 20 or fewer
+            int actualLimit = Math.min(total, limit);
 
-            for (int i = total - 1; i >= total - limit; i--) {
+            // Loop backwards to get most recent games
+            for (int i = total - 1; i >= total - actualLimit; i--) {
                 JsonNode pgn = games.get(i).get("pgn");
                 if (pgn != null) {
-                    pgnBuilder.append(pgn.asString()).append("\n\n");
+                    pgns.add(pgn.asString());
                 }
             }
-            return pgnBuilder.toString();
+            return pgns;
 
         } catch (Exception e) {
             logger.error("Failed to fetch Chess.com data for user: {}", username, e);
-            return "Error: Could not find Chess.com user '" + username + "'";
+            return new ArrayList<>();
         }
     }
 
@@ -118,39 +129,30 @@ public class ChessAnalysisService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         var request = new HttpEntity<>(requestBody, headers);
 
-        // 1. Setup the Primary and Fallback URLs
         String primaryUrl = geminiApiUrl + "?key=" + geminiApiKey;
-        // Dynamically create the backup URL by swapping the model name
         String fallbackUrl = primaryUrl.replace("gemini-3.1-flash-lite-preview", "gemini-3-flash-preview");
 
         try {
-            // 2. ATTEMPT 1: Try the bleeding-edge preview model
             var response = restTemplate.postForEntity(primaryUrl, request, String.class);
             return parseGeminiResponse(response.getBody());
 
         } catch (HttpStatusCodeException e) {
             logger.warn("⚠️ Primary model overloaded ({}). Silently routing to fallback model...", e.getStatusCode());
-
             try {
-                // 3. ATTEMPT 2: The primary failed, instantly try the rock-solid fallback model
                 var fallbackResponse = restTemplate.postForEntity(fallbackUrl, request, String.class);
                 return parseGeminiResponse(fallbackResponse.getBody());
-
             } catch (HttpStatusCodeException fallbackErr) {
-                // 4. TOTAL FAILURE: Both models are down. Now we tell the user.
                 logger.error("❌ Fallback model also failed: {}", fallbackErr.getStatusCode());
                 return "Error: Both primary and backup AI models are currently experiencing massive traffic spikes. Please try again in 60 seconds!";
             } catch (Exception ex) {
                 throw new RuntimeException(ex);
             }
-
         } catch (Exception e) {
             logger.error("Failed to parse Gemini response", e);
             return "Error: Analysis complete, but failed to format the response text.";
         }
     }
 
-    // Helper method so we don't write the JSON parsing logic twice!
     private String parseGeminiResponse(String responseBody) throws Exception {
         JsonNode rootNode = objectMapper.readTree(responseBody);
         return rootNode.path("candidates").get(0).path("content").path("parts").get(0).path("text").asString();
@@ -177,5 +179,59 @@ public class ChessAnalysisService {
                 "Here are the games:\n" + pgns;
 
         return "{ \"contents\": [{ \"parts\":[{\"text\": \"" + prompt.replace("\"", "\\\"").replace("\n", "\\n") + "\"}] }] }";
+    }
+
+    // ⚡ NEW: Fetches the peak rating for the Player Card
+    public int fetchPlayerRating(String platform, String username) {
+        try {
+            if ("lichess".equalsIgnoreCase(platform)) {
+                return getLichessRating(username);
+            } else {
+                return getChessComRating(username);
+            }
+        } catch (Exception e) {
+            logger.error("Failed to fetch rating for {}: {}", username, e.getMessage());
+            return 1200; // Default fallback rating
+        }
+    }
+
+    private int getLichessRating(String username) throws Exception {
+        String url = "https://lichess.org/api/user/" + username;
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("User-Agent", "chessAI.com - local-development");
+        HttpEntity<?> entity = new HttpEntity<>(headers);
+
+        var response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+        if (response.getBody() == null) return 1200;
+
+        JsonNode perfs = objectMapper.readTree(response.getBody()).path("perfs");
+        int max = 0;
+        String[] modes = {"rapid", "blitz", "bullet", "classical"};
+
+        for (String mode : modes) {
+            int rating = perfs.path(mode).path("rating").asInt(0);
+            if (rating > max) max = rating;
+        }
+        return max > 0 ? max : 1200;
+    }
+
+    private int getChessComRating(String username) throws Exception {
+        String url = "https://api.chess.com/pub/player/" + username + "/stats";
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("User-Agent", "chessAI.com - local-development");
+        HttpEntity<?> entity = new HttpEntity<>(headers);
+
+        var response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+        if (response.getBody() == null) return 1200;
+
+        JsonNode root = objectMapper.readTree(response.getBody());
+        int max = 0;
+        String[] modes = {"chess_rapid", "chess_blitz", "chess_bullet"};
+
+        for (String mode : modes) {
+            int rating = root.path(mode).path("best").path("rating").asInt(0);
+            if (rating > max) max = rating;
+        }
+        return max > 0 ? max : 1200;
     }
 }
