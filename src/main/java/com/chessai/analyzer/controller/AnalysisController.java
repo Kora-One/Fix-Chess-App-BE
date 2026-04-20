@@ -49,4 +49,14 @@ public class AnalysisController {
         // Return as a JSON object: {"rating": 1500}
         return ResponseEntity.ok(Map.of("rating", rating));
     }
+
+    // ⚡ NEW: Endpoint for the Angular app to fetch the AI-generated persona
+    @GetMapping("/identity/{username}/{rating}/{mood}")
+    public ResponseEntity<Map<String, String>> getIdentity(
+            @PathVariable String username,
+            @PathVariable int rating,
+            @PathVariable String mood) {
+
+        return ResponseEntity.ok(chessAnalysisService.generateCardIdentity(username, rating, mood));
+    }
 }

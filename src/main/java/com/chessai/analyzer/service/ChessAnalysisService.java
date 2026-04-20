@@ -12,6 +12,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class ChessAnalysisService {
@@ -233,5 +234,61 @@ public class ChessAnalysisService {
             if (rating > max) max = rating;
         }
         return max > 0 ? max : 1200;
+    }
+
+    // ⚡ UPDATED: Now uses dual-model fallback and strict string cleaning!
+    public Map<String, String> generateCardIdentity(String username, int rating, String mood) {
+        String persona = switch (mood.toLowerCase()) {
+            case "roast" -> "sarcastic, insulting, and ruthless";
+            case "humor" -> "funny, goofy, and silly";
+            case "sad" -> "overly dramatic, poetic, and tragic";
+            default -> "cool, professional, and intimidating";
+        };
+
+        // Added strict instructions to avoid markdown
+        String prompt = "You are a chess persona generator. Generate exactly ONE single animal emoji and ONE short tagline (maximum 8 words) for a chess player named '" + username + "' with a peak rating of " + rating + ". The tone of the tagline MUST be " + persona + ". \n" +
+                "Format your response EXACTLY like this: EMOJI|TAGLINE\n" +
+                "Do NOT use markdown, do NOT add quotes, and do NOT add any other text.";
+
+        String requestBody = "{ \"contents\": [{ \"parts\":[{\"text\": \"" + prompt.replace("\"", "\\\"") + "\"}] }] }";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        var request = new HttpEntity<>(requestBody, headers);
+
+        String primaryUrl = geminiApiUrl + "?key=" + geminiApiKey;
+        String fallbackUrl = primaryUrl.replace("gemini-3.1-flash-lite-preview", "gemini-3-flash-preview");
+
+        try {
+            ResponseEntity<String> response;
+            try {
+                // Attempt 1: Primary Model
+                response = restTemplate.postForEntity(primaryUrl, request, String.class);
+            } catch (HttpStatusCodeException e) {
+                logger.warn("⚠️ Primary model busy for Card Identity. Switching to fallback...");
+                // Attempt 2: Fallback Model
+                response = restTemplate.postForEntity(fallbackUrl, request, String.class);
+            }
+
+            JsonNode rootNode = objectMapper.readTree(response.getBody());
+            String text = rootNode.path("candidates").get(0).path("content").path("parts").get(0).path("text").asString();
+
+            // ⚡ CLEANUP: Remove any accidental markdown backticks or extra newlines the AI might have added
+            text = text.replace("`", "").replace("text", "").replace("json", "").trim();
+
+            String[] parts = text.split("\\|");
+            if (parts.length == 2) {
+                return Map.of(
+                        "animal", parts[0].trim(),
+                        "tagline", parts[1].replace("\"", "").trim() // Strip accidental quotes
+                );
+            } else {
+                logger.error("❌ AI returned a weird format that couldn't be split: {}", text);
+            }
+        } catch (Exception e) {
+            logger.error("❌ Failed to generate AI identity: {}", e.getMessage());
+        }
+
+        // Safe fallback if everything crashes
+        return Map.of("animal", "♟️", "tagline", "A mysterious tactician on the board.");
     }
 }
