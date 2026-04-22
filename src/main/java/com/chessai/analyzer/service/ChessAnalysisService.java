@@ -53,7 +53,7 @@ public class ChessAnalysisService {
     // --- LICHESS MATCHER (Returns List of PGNs) ---
     private List<String> fetchLichessGamesList(String username, int limit) {
         try {
-            String url = "https://lichess.org/api/games/user/" + username + "?max=" + limit;
+            String url = "https://lichess.org/api/games/user/" + username + "?max=" + limit + "&opening=true";
 
             HttpHeaders headers = new HttpHeaders();
             headers.set("User-Agent", "chessAI.com - local-development");
