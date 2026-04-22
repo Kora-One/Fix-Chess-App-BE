@@ -83,7 +83,7 @@ public class ChessAnalysisService {
     private List<String> fetchChessComGamesList(String username, int limit) {
         try {
             HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", "chessAI.com - local-development");
+            headers.set("User-Agent", "FixChess App - Developer: Ajay Satpati (ajaysatpati9@gmail.com)");
             HttpEntity<?> entity = new HttpEntity<>(headers);
 
             String archiveUrl = "https://api.chess.com/pub/player/" + username + "/games/archives";
