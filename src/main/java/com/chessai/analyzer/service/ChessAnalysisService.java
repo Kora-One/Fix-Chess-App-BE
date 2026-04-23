@@ -37,9 +37,9 @@ public class ChessAnalysisService {
         }
     }
 
-    public String generateReport(String platform, String username, String mood) {
+    public String generateReport(String platform, String username, String mood, int limit) {
         // ⚡ Reuse the list fetcher for the AI Report!
-        List<String> games = fetchGamesList(platform, username, 20);
+        List<String> games = fetchGamesList(platform, username, limit);
 
         if (games.isEmpty()) {
             return "Error: Could not find user or no games found for '" + username + "'";

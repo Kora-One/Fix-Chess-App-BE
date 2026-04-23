@@ -18,8 +18,8 @@ public class AnalysisController {
 
     // Your existing AI endpoint
     @GetMapping("/analyze/{platform}/{username}/{mood}")
-    public String analyze(@PathVariable String platform, @PathVariable String username, @PathVariable String mood) {
-        return chessAnalysisService.generateReport(platform, username, mood);
+    public String analyze(@PathVariable String platform, @PathVariable String username, @PathVariable String mood, @RequestParam(defaultValue = "20") int limit) {
+        return chessAnalysisService.generateReport(platform, username, mood, limit);
     }
 
     // ⚡ NEW: Endpoint just for the Angular graphs!
