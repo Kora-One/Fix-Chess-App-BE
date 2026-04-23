@@ -3,6 +3,7 @@ package com.chessai.analyzer.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpStatusCodeException;
@@ -37,6 +38,7 @@ public class ChessAnalysisService {
         }
     }
 
+    @Cacheable(value = "ai-reports", key = "#platform + '-' + #username + '-' + #mood + '-' + #limit")
     public String generateReport(String platform, String username, String mood, int limit) {
         // ⚡ Reuse the list fetcher for the AI Report!
         List<String> games = fetchGamesList(platform, username, limit);
@@ -183,6 +185,7 @@ public class ChessAnalysisService {
     }
 
     // ⚡ NEW: Fetches the peak rating for the Player Card
+    @Cacheable(value = "player-ratings", key = "#platform + '-' + #username")
     public int fetchPlayerRating(String platform, String username) {
         try {
             if ("lichess".equalsIgnoreCase(platform)) {
@@ -237,6 +240,7 @@ public class ChessAnalysisService {
     }
 
     // ⚡ UPDATED: Now uses dual-model fallback and strict string cleaning!
+    @Cacheable(value = "player-identities", key = "#username + '-' + #rating + '-' + #mood")
     public Map<String, String> generateCardIdentity(String username, int rating, String mood) {
         String persona = switch (mood.toLowerCase()) {
             case "roast" -> "sarcastic, insulting, and ruthless";
