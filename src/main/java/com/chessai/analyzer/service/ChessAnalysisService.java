@@ -58,7 +58,7 @@ public class ChessAnalysisService {
             String url = "https://lichess.org/api/games/user/" + username + "?max=" + limit + "&opening=true";
 
             HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", "chessAI.com - local-development");
+            headers.set("User-Agent", "FixChess App - Developer: Ajay Satpati (ajaysatpati9@gmail.com)");
             headers.set("Accept", "application/x-chess-pgn");
 
             HttpEntity<?> entity = new HttpEntity<>(headers);
@@ -202,7 +202,7 @@ public class ChessAnalysisService {
     private int getLichessRating(String username) throws Exception {
         String url = "https://lichess.org/api/user/" + username;
         HttpHeaders headers = new HttpHeaders();
-        headers.set("User-Agent", "chessAI.com - local-development");
+        headers.set("User-Agent", "FixChess App - Developer: Ajay Satpati (ajaysatpati9@gmail.com)");
         HttpEntity<?> entity = new HttpEntity<>(headers);
 
         var response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
@@ -222,7 +222,7 @@ public class ChessAnalysisService {
     private int getChessComRating(String username) throws Exception {
         String url = "https://api.chess.com/pub/player/" + username + "/stats";
         HttpHeaders headers = new HttpHeaders();
-        headers.set("User-Agent", "chessAI.com - local-development");
+        headers.set("User-Agent", "FixChess App - Developer: Ajay Satpati (ajaysatpati9@gmail.com)");
         HttpEntity<?> entity = new HttpEntity<>(headers);
 
         var response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
