@@ -295,4 +295,69 @@ public class ChessAnalysisService {
         // Safe fallback if everything crashes
         return Map.of("animal", "♟️", "tagline", "A mysterious tactician on the board.");
     }
+
+    // ⚡ NEW: Generates the Psychological Pressure Profile (Radar Chart Data)
+    @Cacheable(value = "pressure-profiles", key = "#platform + '-' + #username + '-' + #limit")
+    public Map<String, Object> generatePressureProfile(String platform, String username, int limit) {
+        List<String> games = fetchGamesList(platform, username, limit);
+
+        if (games.isEmpty()) {
+            return Map.of("error", "Could not find user or no games found for '" + username + "'");
+        }
+
+        String pgns = String.join("\n\n", games);
+
+        // The Prompt forcing Gemini to output STRICT JSON
+        String prompt = "Analyze these recent games for the player '" + username + "'. " +
+                "Estimate their performance out of 100 when they have plenty of time (Normal) vs time trouble under 30 seconds (Pressure). " +
+                "You MUST respond ONLY with a valid JSON object matching this exact structure. Do NOT wrap it in markdown backticks. " +
+                "{\n" +
+                "  \"attributes\": [\"Opening Prep\", \"Endgame Mastery\", \"Tactics & Patterns\", \"Material Protection\", \"Move Accuracy\"],\n" +
+                "  \"normalData\": [85, 70, 80, 75, 82],\n" +
+                "  \"pressureData\": [80, 30, 45, 20, 50],\n" +
+                "  \"persona\": \"The Bullet Panic-er\",\n" +
+                "  \"aiInsight\": \"Your comfort-zone play is solid, but when the clock turns red, you hang pieces recklessly.\"\n" +
+                "}\n\n" +
+                "Games Data:\n" + pgns;
+
+        String requestBody = "{ \"contents\": [{ \"parts\":[{\"text\": \"" + prompt.replace("\"", "\\\"").replace("\n", "\\n") + "\"}] }] }";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        var request = new HttpEntity<>(requestBody, headers);
+
+        String primaryUrl = geminiApiUrl + "?key=" + geminiApiKey;
+        String fallbackUrl = primaryUrl.replace("gemini-3.1-flash-lite-preview", "gemini-3-flash-preview");
+
+        try {
+            ResponseEntity<String> response;
+            try {
+                response = restTemplate.postForEntity(primaryUrl, request, String.class);
+            } catch (HttpStatusCodeException e) {
+                logger.warn("⚠️ Primary model busy for Pressure Profile. Switching to fallback...");
+                response = restTemplate.postForEntity(fallbackUrl, request, String.class);
+            }
+
+            // Parse Gemini's response string to get the text block
+            JsonNode rootNode = objectMapper.readTree(response.getBody());
+            String aiJsonText = rootNode.path("candidates").get(0).path("content").path("parts").get(0).path("text").asString();
+
+            // ⚡ CLEANUP: Strip markdown if Gemini disobeys the "No Markdown" rule
+            aiJsonText = aiJsonText.replace("```json", "").replace("```", "").trim();
+
+            // Convert the AI's JSON string into a Java Map
+            return objectMapper.readValue(aiJsonText, Map.class);
+
+        } catch (Exception e) {
+            logger.error("❌ Failed to generate Pressure Profile: {}", e.getMessage());
+            // Fallback Data so the frontend chart doesn't crash
+            return Map.of(
+                    "attributes", List.of("Opening Prep", "Endgame Mastery", "Tactics", "Protection", "Accuracy"),
+                    "normalData", List.of(80, 80, 80, 80, 80),
+                    "pressureData", List.of(40, 40, 40, 40, 40),
+                    "persona", "The Enigma",
+                    "aiInsight", "Data was corrupted by time pressure."
+            );
+        }
+    }
 }
