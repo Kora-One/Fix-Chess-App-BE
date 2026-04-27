@@ -40,16 +40,35 @@ public class ChessAnalysisService {
 
     @Cacheable(value = "ai-reports", key = "#platform + '-' + #username + '-' + #mood + '-' + #limit")
     public String generateReport(String platform, String username, String mood, int limit) {
-        // ⚡ Reuse the list fetcher for the AI Report!
         List<String> games = fetchGamesList(platform, username, limit);
 
         if (games.isEmpty()) {
             return "Error: Could not find user or no games found for '" + username + "'";
         }
 
-        // Join the list into a single string for Gemini
         String pgns = String.join("\n\n", games);
-        return askGemini(username, pgns, mood);
+
+        String personaInstruction = switch (mood.toLowerCase()) {
+            case "roast" -> "Adopt a highly critical, sarcastic, and funny tone. Roast the player ruthlessly for their blunders and missed tactics like an arrogant grandmaster. ";
+            case "humor" -> "Keep the tone lighthearted, encouraging, and highly comedic. Use funny analogies to explain the chess moves. ";
+            case "sad" -> "Act overly dramatic and mournful about the player's mistakes. Speak as if every blunder is a profound, heart-breaking tragedy. ";
+            default -> "Provide a completely professional, objective, and serious analytical chess breakdown. ";
+        };
+
+        String prompt = "Act as an expert chess coach. " + personaInstruction + "Analyze the following recent games for the player '" + username + "'. " +
+                "You MUST format your response EXACTLY according to the following structure. Keep your tone consistent within these sections:\n\n" +
+                "### Introduction\n" +
+                "[Overview of their playstyle]\n\n" +
+                "### Main Weaknesses\n" +
+                "[Bulleted list detailing recurring blunders or inaccuracies]\n\n" +
+                "### Advice\n" +
+                "[Specific, actionable steps to improve]\n\n" +
+                "### Estimated Time to Improve\n" +
+                "[Realistic timeframe to see results]\n\n" +
+                "Here are the games:\n" + pgns;
+
+        // ⚡ Call the new Master Engine!
+        return executeGeminiRequest(prompt);
     }
 
     // --- LICHESS MATCHER (Returns List of PGNs) ---
@@ -125,65 +144,6 @@ public class ChessAnalysisService {
         }
     }
 
-    // --- GEMINI INTEGRATION ---
-    private String askGemini(String username, String pgns, String mood) {
-        String requestBody = getString(username, pgns, mood);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        var request = new HttpEntity<>(requestBody, headers);
-
-        String primaryUrl = geminiApiUrl + "?key=" + geminiApiKey;
-        String fallbackUrl = primaryUrl.replace("gemini-3.1-flash-lite-preview", "gemini-3-flash-preview");
-
-        try {
-            var response = restTemplate.postForEntity(primaryUrl, request, String.class);
-            return parseGeminiResponse(response.getBody());
-
-        } catch (HttpStatusCodeException e) {
-            logger.warn("⚠️ Primary model overloaded ({}). Silently routing to fallback model...", e.getStatusCode());
-            try {
-                var fallbackResponse = restTemplate.postForEntity(fallbackUrl, request, String.class);
-                return parseGeminiResponse(fallbackResponse.getBody());
-            } catch (HttpStatusCodeException fallbackErr) {
-                logger.error("❌ Fallback model also failed: {}", fallbackErr.getStatusCode());
-                return "Error: Both primary and backup AI models are currently experiencing massive traffic spikes. Please try again in 60 seconds!";
-            } catch (Exception ex) {
-                throw new RuntimeException(ex);
-            }
-        } catch (Exception e) {
-            logger.error("Failed to parse Gemini response", e);
-            return "Error: Analysis complete, but failed to format the response text.";
-        }
-    }
-
-    private String parseGeminiResponse(String responseBody) throws Exception {
-        JsonNode rootNode = objectMapper.readTree(responseBody);
-        return rootNode.path("candidates").get(0).path("content").path("parts").get(0).path("text").asString();
-    }
-
-    private static String getString(String username, String pgns, String mood) {
-        String personaInstruction = switch (mood.toLowerCase()) {
-            case "roast" -> "Adopt a highly critical, sarcastic, and funny tone. Roast the player ruthlessly for their blunders and missed tactics like an arrogant grandmaster. ";
-            case "humor" -> "Keep the tone lighthearted, encouraging, and highly comedic. Use funny analogies to explain the chess moves. ";
-            case "sad" -> "Act overly dramatic and mournful about the player's mistakes. Speak as if every blunder is a profound, heart-breaking tragedy. ";
-            default -> "Provide a completely professional, objective, and serious analytical chess breakdown. ";
-        };
-
-        String prompt = "Act as an expert chess coach. " + personaInstruction + "Analyze the following recent games for the player '" + username + "'. " +
-                "You MUST format your response EXACTLY according to the following structure. Keep your tone consistent within these sections:\n\n" +
-                "### Introduction\n" +
-                "[Overview of their playstyle based on the games]\n\n" +
-                "### Main Weaknesses\n" +
-                "[Bulleted list detailing recurring blunders or inaccuracies]\n\n" +
-                "### Advice\n" +
-                "[Specific, actionable steps to improve]\n\n" +
-                "### Estimated Time to Improve\n" +
-                "[Realistic timeframe to see results]\n\n" +
-                "Here are the games:\n" + pgns;
-
-        return "{ \"contents\": [{ \"parts\":[{\"text\": \"" + prompt.replace("\"", "\\\"").replace("\n", "\\n") + "\"}] }] }";
-    }
-
     // ⚡ NEW: Fetches the peak rating for the Player Card
     @Cacheable(value = "player-ratings", key = "#platform + '-' + #username")
     public int fetchPlayerRating(String platform, String username) {
@@ -249,51 +209,26 @@ public class ChessAnalysisService {
             default -> "cool, professional, and intimidating";
         };
 
-        // Added strict instructions to avoid markdown
         String prompt = "You are a chess persona generator. Generate exactly ONE single animal emoji and ONE short tagline (maximum 8 words) for a chess player named '" + username + "' with a peak rating of " + rating + ". The tone of the tagline MUST be " + persona + ". \n" +
                 "Format your response EXACTLY like this: EMOJI|TAGLINE\n" +
                 "Do NOT use markdown, do NOT add quotes, and do NOT add any other text.";
 
-        String requestBody = "{ \"contents\": [{ \"parts\":[{\"text\": \"" + prompt.replace("\"", "\\\"") + "\"}] }] }";
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        var request = new HttpEntity<>(requestBody, headers);
+        // ⚡ Call the new Master Engine!
+        String text = executeGeminiRequest(prompt);
 
-        String primaryUrl = geminiApiUrl + "?key=" + geminiApiKey;
-        String fallbackUrl = primaryUrl.replace("gemini-3.1-flash-lite-preview", "gemini-3-flash-preview");
+        // ⚡ CLEANUP: Remove any accidental markdown backticks the AI might have added
+        text = text.replace("`", "").replace("text", "").replace("json", "").trim();
 
-        try {
-            ResponseEntity<String> response;
-            try {
-                // Attempt 1: Primary Model
-                response = restTemplate.postForEntity(primaryUrl, request, String.class);
-            } catch (HttpStatusCodeException e) {
-                logger.warn("⚠️ Primary model busy for Card Identity. Switching to fallback...");
-                // Attempt 2: Fallback Model
-                response = restTemplate.postForEntity(fallbackUrl, request, String.class);
-            }
-
-            JsonNode rootNode = objectMapper.readTree(response.getBody());
-            String text = rootNode.path("candidates").get(0).path("content").path("parts").get(0).path("text").asString();
-
-            // ⚡ CLEANUP: Remove any accidental markdown backticks or extra newlines the AI might have added
-            text = text.replace("`", "").replace("text", "").replace("json", "").trim();
-
-            String[] parts = text.split("\\|");
-            if (parts.length == 2) {
-                return Map.of(
-                        "animal", parts[0].trim(),
-                        "tagline", parts[1].replace("\"", "").trim() // Strip accidental quotes
-                );
-            } else {
-                logger.error("❌ AI returned a weird format that couldn't be split: {}", text);
-            }
-        } catch (Exception e) {
-            logger.error("❌ Failed to generate AI identity: {}", e.getMessage());
+        String[] parts = text.split("\\|");
+        if (parts.length == 2) {
+            return Map.of(
+                    "animal", parts[0].trim(),
+                    "tagline", parts[1].replace("\"", "").trim()
+            );
+        } else {
+            logger.error("❌ AI returned a weird format that couldn't be split: {}", text);
+            return Map.of("animal", "♟️", "tagline", "A mysterious tactician on the board.");
         }
-
-        // Safe fallback if everything crashes
-        return Map.of("animal", "♟️", "tagline", "A mysterious tactician on the board.");
     }
 
     // ⚡ NEW: Generates the Psychological Pressure Profile (Radar Chart Data)
@@ -320,28 +255,10 @@ public class ChessAnalysisService {
                 "}\n\n" +
                 "Games Data:\n" + pgns;
 
-        String requestBody = "{ \"contents\": [{ \"parts\":[{\"text\": \"" + prompt.replace("\"", "\\\"").replace("\n", "\\n") + "\"}] }] }";
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        var request = new HttpEntity<>(requestBody, headers);
-
-        String primaryUrl = geminiApiUrl + "?key=" + geminiApiKey;
-        String fallbackUrl = primaryUrl.replace("gemini-3.1-flash-lite-preview", "gemini-3-flash-preview");
+        // ⚡ Call the Master Engine!
+        String aiJsonText = executeGeminiRequest(prompt);
 
         try {
-            ResponseEntity<String> response;
-            try {
-                response = restTemplate.postForEntity(primaryUrl, request, String.class);
-            } catch (HttpStatusCodeException e) {
-                logger.warn("⚠️ Primary model busy for Pressure Profile. Switching to fallback...");
-                response = restTemplate.postForEntity(fallbackUrl, request, String.class);
-            }
-
-            // Parse Gemini's response string to get the text block
-            JsonNode rootNode = objectMapper.readTree(response.getBody());
-            String aiJsonText = rootNode.path("candidates").get(0).path("content").path("parts").get(0).path("text").asString();
-
             // ⚡ CLEANUP: Strip markdown if Gemini disobeys the "No Markdown" rule
             aiJsonText = aiJsonText.replace("```json", "").replace("```", "").trim();
 
@@ -349,7 +266,7 @@ public class ChessAnalysisService {
             return objectMapper.readValue(aiJsonText, Map.class);
 
         } catch (Exception e) {
-            logger.error("❌ Failed to generate Pressure Profile: {}", e.getMessage());
+            logger.error("❌ Failed to parse Pressure Profile JSON: {}", e.getMessage());
             // Fallback Data so the frontend chart doesn't crash
             return Map.of(
                     "attributes", List.of("Opening Prep", "Endgame Mastery", "Tactics", "Protection", "Accuracy"),
@@ -359,5 +276,58 @@ public class ChessAnalysisService {
                     "aiInsight", "Data was corrupted by time pressure."
             );
         }
+    }
+
+    // ==============================================================================================
+    // ⚡ THE MASTER ENGINE: All Gemini logic centralized here
+    // ==============================================================================================
+    private String executeGeminiRequest(String prompt) {
+        try {
+            // Safely build the JSON using Jackson
+            Map<String, Object> requestMap = Map.of("contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))));
+            String requestBody = objectMapper.writeValueAsString(requestMap);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<String> request = new HttpEntity<>(requestBody, headers);
+
+            String primaryUrl = geminiApiUrl + "?key=" + geminiApiKey;
+
+            // ⚡ NEW: Store all 3 URLs in an array in the exact order you want to try them
+            String[] fallbackChain = {
+                    primaryUrl,                                                                       // 1. Flash Lite (Fastest)
+                    primaryUrl.replace("gemini-3.1-flash-lite-preview", "gemini-2.5-flash"),    // 2. Flash (Fallback)
+                    primaryUrl.replace("gemini-3.1-flash-lite-preview", "Gemini 2.5 Flash-Lite")             // 3. Pro (The Heavyweight Safety Net)
+            };
+
+            // ⚡ NEW: Loop through the chain. If one fails, the loop continues to the next!
+            for (int i = 0; i < fallbackChain.length; i++) {
+                try {
+                    var response = restTemplate.postForEntity(fallbackChain[i], request, String.class);
+                    return extractTextFromJson(response.getBody());
+
+                } catch (HttpStatusCodeException e) {
+                    logger.warn("⚠️ Model attempt {} failed with status {}.", i + 1, e.getStatusCode());
+
+                    // If we just failed on the VERY LAST model in the list, stop and return the error
+                    if (i == fallbackChain.length - 1) {
+                        logger.error("❌ ALL THREE Gemini models failed!");
+                        return "Error: Both primary and backup AI models are currently experiencing massive traffic spikes. Please try again in 60 seconds!";
+                    }
+
+                    logger.info("🔄 Routing to the next fallback model in the chain...");
+                }
+            }
+
+        } catch (Exception e) {
+            logger.error("Gemini API Request Construction Failure", e);
+            return "Error: AI engine failed to process request.";
+        }
+
+        return "Error: Unexpected AI failure.";
+    }
+
+    private String extractTextFromJson(String responseBody) throws Exception {
+        return objectMapper.readTree(responseBody).path("candidates").get(0).path("content").path("parts").get(0).path("text").asString();
     }
 }
