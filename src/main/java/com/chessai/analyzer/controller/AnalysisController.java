@@ -60,10 +60,10 @@ public class AnalysisController {
         return ResponseEntity.ok(chessAnalysisService.generateCardIdentity(username, rating, mood));
     }
 
-    @GetMapping("/api/pressure")
+    @GetMapping("/pressure/{platform}/{username}")
     public ResponseEntity<Map<String, Object>> getPressureProfile(
-            @RequestParam String platform,
-            @RequestParam String username,
+            @PathVariable String platform,
+            @PathVariable String username,
             @RequestParam(defaultValue = "20") int limit) {
 
         Map<String, Object> profile = chessAnalysisService.generatePressureProfile(platform, username, limit);
@@ -71,7 +71,6 @@ public class AnalysisController {
         if (profile.containsKey("error")) {
             return ResponseEntity.badRequest().body(profile);
         }
-
         return ResponseEntity.ok(profile);
     }
 }
