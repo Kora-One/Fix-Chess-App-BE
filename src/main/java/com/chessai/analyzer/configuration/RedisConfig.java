@@ -16,9 +16,8 @@ public class RedisConfig {
     @Bean
     public RedisCacheConfiguration cacheConfiguration() {
         return RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl(Duration.ofHours(1)) // ⚡ Automatically deletes cache after 24 hours
+                .entryTtl(Duration.ofHours(1))
                 .disableCachingNullValues()
-                // ⚡ Modern Spring 3.4+ JSON Serializer
                 .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(RedisSerializer.json()));
     }
 }

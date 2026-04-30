@@ -17,17 +17,17 @@ public class RedisErrorHandlerConfig implements CachingConfigurer {
         return new CacheErrorHandler() {
             @Override
             public void handleCacheGetError(RuntimeException exception, Cache cache, Object key) {
-                log.warn("Redis is down! Bypassing cache and executing method directly. Key: {}", key);
+                log.warn("Redis is down! Bypassing cache and executing method directly.");
             }
 
             @Override
             public void handleCachePutError(RuntimeException exception, Cache cache, Object key, Object value) {
-                log.warn("Redis is down! Failed to save report, but continuing normally. Key: {}", key);
+                log.warn("Redis is down! Failed to save report, but continuing normally.");
             }
 
             @Override
             public void handleCacheEvictError(RuntimeException exception, Cache cache, Object key) {
-                log.warn("Redis is down! Failed to evict key: {}", key);
+                log.warn("Redis is down! Failed to evict key");
             }
 
             @Override

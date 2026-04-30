@@ -29,7 +29,6 @@ public class ChessAnalysisService {
 
     private final RestTemplate restTemplate = new RestTemplate();
 
-    // ⚡ NEW: Public method to expose games to the frontend graphs
     public List<String> fetchGamesList(String platform, String username, int limit) {
         if ("lichess".equalsIgnoreCase(platform)) {
             return fetchLichessGamesList(username, limit);
@@ -67,11 +66,9 @@ public class ChessAnalysisService {
                 "[Realistic timeframe to see results]\n\n" +
                 "Here are the games:\n" + pgns;
 
-        // ⚡ Call the new Master Engine!
         return executeGeminiRequest(prompt);
     }
 
-    // --- LICHESS MATCHER (Returns List of PGNs) ---
     private List<String> fetchLichessGamesList(String username, int limit) {
         try {
             String url = "https://lichess.org/api/games/user/" + username + "?max=" + limit + "&opening=true";
@@ -86,7 +83,6 @@ public class ChessAnalysisService {
 
             if (body == null || body.isBlank()) return new ArrayList<>();
 
-            // Split the raw text block into individual PGNs
             String[] parts = body.split("(?=\\[Event \")");
             List<String> pgns = new ArrayList<>();
             for (String part : parts) {
@@ -100,7 +96,6 @@ public class ChessAnalysisService {
         }
     }
 
-    // --- CHESS.COM MATCHER (Returns List of PGNs) ---
     private List<String> fetchChessComGamesList(String username, int limit) {
         try {
             HttpHeaders headers = new HttpHeaders();
@@ -129,7 +124,6 @@ public class ChessAnalysisService {
             int total = games.size();
             int actualLimit = Math.min(total, limit);
 
-            // Loop backwards to get most recent games
             for (int i = total - 1; i >= total - actualLimit; i--) {
                 JsonNode pgn = games.get(i).get("pgn");
                 if (pgn != null) {
@@ -144,7 +138,6 @@ public class ChessAnalysisService {
         }
     }
 
-    // ⚡ NEW: Fetches the peak rating for the Player Card
     @Cacheable(value = "player-ratings", key = "#platform + '-' + #username")
     public int fetchPlayerRating(String platform, String username) {
         try {
@@ -199,7 +192,6 @@ public class ChessAnalysisService {
         return max > 0 ? max : 1200;
     }
 
-    // ⚡ UPDATED: Now uses dual-model fallback and strict string cleaning!
     @Cacheable(value = "player-identities", key = "#username + '-' + #rating + '-' + #mood")
     public Map<String, String> generateCardIdentity(String username, int rating, String mood) {
         String persona = switch (mood.toLowerCase()) {
@@ -213,10 +205,8 @@ public class ChessAnalysisService {
                 "Format your response EXACTLY like this: EMOJI|TAGLINE\n" +
                 "Do NOT use markdown, do NOT add quotes, and do NOT add any other text.";
 
-        // ⚡ Call the new Master Engine!
         String text = executeGeminiRequest(prompt);
 
-        // ⚡ CLEANUP: Remove any accidental markdown backticks the AI might have added
         text = text.replace("`", "").replace("text", "").replace("json", "").trim();
 
         String[] parts = text.split("\\|");
@@ -231,7 +221,6 @@ public class ChessAnalysisService {
         }
     }
 
-    // ⚡ NEW: Generates the Psychological Pressure Profile (Radar Chart Data)
     @Cacheable(value = "pressure-profiles", key = "#platform + '-' + #username + '-' + #limit")
     public Map<String, Object> generatePressureProfile(String platform, String username, int limit) {
         List<String> games = fetchGamesList(platform, username, limit);
@@ -242,7 +231,6 @@ public class ChessAnalysisService {
 
         String pgns = String.join("\n\n", games);
 
-        // The Prompt forcing Gemini to output STRICT JSON
         String prompt = "Analyze these recent games for the player '" + username + "'. " +
                 "Estimate their performance out of 100 when they have plenty of time (Normal) vs time trouble under 30 seconds (Pressure). " +
                 "You MUST respond ONLY with a valid JSON object matching this exact structure. Do NOT wrap it in markdown backticks. " +
@@ -255,7 +243,6 @@ public class ChessAnalysisService {
                 "}\n\n" +
                 "Games Data:\n" + pgns;
 
-        // ⚡ Call the Master Engine!
         String aiJsonText = executeGeminiRequest(prompt);
 
         try {
@@ -278,12 +265,8 @@ public class ChessAnalysisService {
         }
     }
 
-    // ==============================================================================================
-    // ⚡ THE MASTER ENGINE: All Gemini logic centralized here
-    // ==============================================================================================
     private String executeGeminiRequest(String prompt) {
         try {
-            // Safely build the JSON using Jackson
             Map<String, Object> requestMap = Map.of("contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))));
             String requestBody = objectMapper.writeValueAsString(requestMap);
 
@@ -293,14 +276,12 @@ public class ChessAnalysisService {
 
             String primaryUrl = geminiApiUrl + "?key=" + geminiApiKey;
 
-            // ⚡ NEW: Store all 3 URLs in an array in the exact order you want to try them
             String[] fallbackChain = {
-                    primaryUrl,                                                                       // 1. Flash Lite (Fastest)
-                    primaryUrl.replace("gemini-3.1-flash-lite-preview", "gemini-2.5-flash"),    // 2. Flash (Fallback)
-                    primaryUrl.replace("gemini-3.1-flash-lite-preview", "Gemini 2.5 Flash-Lite")             // 3. Pro (The Heavyweight Safety Net)
+                    primaryUrl,
+                    primaryUrl.replace("gemini-3.1-flash-lite-preview", "gemini-2.5-flash"),
+                    primaryUrl.replace("gemini-3.1-flash-lite-preview", "Gemini 2.5 Flash-Lite")
             };
 
-            // ⚡ NEW: Loop through the chain. If one fails, the loop continues to the next!
             for (int i = 0; i < fallbackChain.length; i++) {
                 try {
                     var response = restTemplate.postForEntity(fallbackChain[i], request, String.class);
@@ -309,7 +290,6 @@ public class ChessAnalysisService {
                 } catch (HttpStatusCodeException e) {
                     logger.warn("⚠️ Model attempt {} failed with status {}.", i + 1, e.getStatusCode());
 
-                    // If we just failed on the VERY LAST model in the list, stop and return the error
                     if (i == fallbackChain.length - 1) {
                         logger.error("❌ ALL THREE Gemini models failed!");
                         return "Error: Both primary and backup AI models are currently experiencing massive traffic spikes. Please try again in 60 seconds!";

@@ -16,13 +16,11 @@ public class AnalysisController {
     @Autowired
     private ChessAnalysisService chessAnalysisService;
 
-    // Your existing AI endpoint
     @GetMapping("/analyze/{platform}/{username}/{mood}")
     public String analyze(@PathVariable String platform, @PathVariable String username, @PathVariable String mood, @RequestParam(defaultValue = "20") int limit) {
         return chessAnalysisService.generateReport(platform, username, mood, limit);
     }
 
-    // ⚡ NEW: Endpoint just for the Angular graphs!
     @GetMapping("/games/{platform}/{username}")
     public ResponseEntity<List<String>> getGames(
             @PathVariable String platform,
@@ -38,19 +36,15 @@ public class AnalysisController {
         return ResponseEntity.ok(games);
     }
 
-    // ⚡ NEW: Endpoint just for fetching the Player Card rating
     @GetMapping("/stats/{platform}/{username}")
     public ResponseEntity<Map<String, Integer>> getPlayerStats(
             @PathVariable String platform,
             @PathVariable String username) {
 
         int rating = chessAnalysisService.fetchPlayerRating(platform, username);
-
-        // Return as a JSON object: {"rating": 1500}
         return ResponseEntity.ok(Map.of("rating", rating));
     }
 
-    // ⚡ NEW: Endpoint for the Angular app to fetch the AI-generated persona
     @GetMapping("/identity/{username}/{rating}/{mood}")
     public ResponseEntity<Map<String, String>> getIdentity(
             @PathVariable String username,
